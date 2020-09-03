@@ -6,6 +6,7 @@ use std::io::Write;
 use std::num;
 use std::ops::{Add, AddAssign, Index, Mul, Sub};
 use std::time::Instant;
+use rayon::prelude::*;
 
 const WIDTH: usize = 900;
 const HEIGHT: usize = 900;
@@ -492,7 +493,7 @@ fn main() -> std::io::Result<()> {
             spp,
             col as f64 / WIDTH as f64 * 100.0
         );
-        for row in 0..HEIGHT {
+        pix[col].par_iter_mut().enumerate().for_each(|(row, data)| {
             for _ in 0..spp {
                 let mut cam = camcr(col as f64, row as f64); // construct image plane coordinates
                 cam.x += RND() / 700.0; // anti-aliasing for free
@@ -506,9 +507,9 @@ fn main() -> std::io::Result<()> {
 
                 let mut color = v3(0.0, 0.0, 0.0);
                 trace(&mut ray, &scene, 0, &mut color, &params);
-                pix[col][row] += color.div(spp as f64); // write the contributions
+                *data += color.div(spp as f64); // write the contributions
             }
-        }
+        });
     }
 
     let mut file = File::create("ray.ppm")?;
