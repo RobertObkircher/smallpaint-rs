@@ -1,3 +1,4 @@
+use rand::prelude::random;
 use std::cmp::min;
 use std::f64::consts::PI;
 use std::fs::File;
@@ -13,11 +14,15 @@ const EPS: f64 = 1e-6;
 
 //std::mt19937 mersenneTwister;
 //std::uniform_real_distribution<double> uniform;
-
 //#define RND (2.0*uniform(mersenneTwister)-1.0)
 //#define RND2 (uniform(mersenneTwister))
+fn RND() -> f64 {
+    2.0 * random::<f64>() - 1.0
+}
 
-//typedef unordered_map<string, double> pl;
+fn RND2() -> f64 {
+    random()
+}
 
 #[derive(Copy, Clone, Debug)]
 struct Vector {
@@ -56,7 +61,7 @@ impl Vector {
     }
 
     fn dot(&self, rhs: &Vector) -> f64 {
-        let v = self * rhs;
+        let v = *self * *rhs;
         v.x + v.y + v.z
     }
 
@@ -146,12 +151,6 @@ fn ons(v1: &Vector) -> (Vector, Vector) {
 struct Ray {
     o: Vector,
     d: Vector,
-}
-
-impl Ray {
-    fn new(o: Vector, d: Vector) -> Ray {
-        Ray { o, d: d.norm() }
-    }
 }
 
 // Objects have color, emission, type (diffuse, specular, refractive)
@@ -275,7 +274,7 @@ impl Scene {
             t: INF,
             object: None,
         };
-        for object in self.objects {
+        for object in &self.objects {
             let t = object.shape.intersect(ray);
             if t > EPS && t < closest.t {
                 closest.t = t;
@@ -315,9 +314,9 @@ struct Params {
 fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut Vector, params: &Params) {
     // Russian roulette: starting at depth 5, each recursive step will stop with a probability of 0.1
     let mut rrFactor = 1.0;
-    if (depth >= 5) {
+    if depth >= 5 {
         let rrStopProbability = 0.1;
-        if RND2 <= rrStopProbability {
+        if RND2() <= rrStopProbability {
             return;
         }
         rrFactor = 1.0 / (1.0 - rrStopProbability);
@@ -332,7 +331,7 @@ fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut Vector, params: &Pa
 
     // Travel the ray to the hit point where the closest object lies and compute the surface normal there.
     let hp = ray.o + ray.d.scale(t);
-    let N = obj.shape.normal(&hp);
+    let mut N = obj.shape.normal(&hp);
     ray.o = hp;
     // Add the emission, the L_e(x,w) part of the rendering equation, but scale it with the Russian Roulette
     // probability weight.
@@ -343,7 +342,7 @@ fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut Vector, params: &Pa
         // Diffuse BRDF - choose an outgoing direction with hemisphere sampling.
         ObjType::DiffuseBRDF => {
             let (rotX, rotY) = ons(&N);
-            let sampledDir = hemisphere(RND2, RND2);
+            let sampledDir = hemisphere(RND2(), RND2());
             let rotatedDir = Vector {
                 x: Vector::new(rotX.x, rotY.x, N.x).dot(&sampledDir),
                 y: Vector::new(rotX.y, rotY.y, N.y).dot(&sampledDir),
@@ -359,7 +358,7 @@ fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut Vector, params: &Pa
         // direction -> one outgoing direction, that is, the perfect reflection direction.
         ObjType::SpecularBRDF => {
             let cost = ray.d.dot(&N);
-            ray.d = (ray.d - N * (cost * 2.0)).norm();
+            ray.d = (ray.d - N.scale(cost * 2.0)).norm();
             trace(ray, scene, depth + 1, &mut tmp, params);
             *clr += tmp.scale(rrFactor);
         }
@@ -377,10 +376,10 @@ fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut Vector, params: &Pa
             n = 1.0 / n;
             let cost1 = (N.dot(&ray.d)) * -1.0; // cosine of theta_1
             let cost2 = 1.0 - n * n * (1.0 - cost1 * cost1); // cosine of theta_2
-            let Rprob = R0 + (1.0 - R0) * pow(1.0 - cost1, 5.0); // Schlick-approximation
-            ray.d = if cost2 > 0.0 && RND2 > Rprob {
+            let Rprob = R0 + (1.0 - R0) * f64::powf(1.0 - cost1, 5.0); // Schlick-approximation
+            ray.d = if cost2 > 0.0 && RND2() > Rprob {
                 // refraction direction
-                ((&ray.d.scale(n)) + (N.scale(n * cost1 - sqrt(cost2)))).norm()
+                ((ray.d.scale(n)) + (N.scale(n * cost1 - cost2.sqrt()))).norm()
             } else {
                 // reflection direction
                 (ray.d + N.scale(cost1 * 2.0)).norm()
@@ -494,13 +493,13 @@ fn main() -> std::io::Result<()> {
             col as f64 / WIDTH as f64 * 100.0
         );
         for row in 0..HEIGHT {
-            for s in 0..spp {
+            for _ in 0..spp {
                 let mut cam = camcr(col as f64, row as f64); // construct image plane coordinates
-                cam.x += RND / 700.0; // anti-aliasing for free
-                cam.y += RND / 700.0;
+                cam.x += RND() / 700.0; // anti-aliasing for free
+                cam.y += RND() / 700.0;
 
                 let o = v3(0.0, 0.0, 0.0);
-                let ray = Ray {
+                let mut ray = Ray {
                     o,
                     d: (cam - o).norm(), // point from the origin to the camera plane
                 };
