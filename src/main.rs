@@ -1,12 +1,13 @@
 use rand::prelude::random;
+use rayon::prelude::*;
 use std::cmp::min;
 use std::f64::consts::PI;
 use std::fs::File;
 use std::io::Write;
 use std::num;
 use std::ops::{Add, AddAssign, Index, Mul, Sub};
+use std::sync::atomic::Ordering;
 use std::time::Instant;
-use rayon::prelude::*;
 
 const WIDTH: usize = 900;
 const HEIGHT: usize = 900;
@@ -481,23 +482,26 @@ fn main() -> std::io::Result<()> {
     };
 
     let params = Params { refr_index: 1.5 };
-    let spp = 80; // samples per pixel
+    let spp = 2000; // samples per pixel
 
     let mut pix = vec![vec![Vector::new(0.0, 0.0, 0.0); WIDTH]; HEIGHT];
 
     let start = Instant::now();
 
-    for col in 0..WIDTH {
+    let mut progress = std::sync::atomic::AtomicUsize::new(0);
+
+    pix.par_iter_mut().enumerate().for_each(|(col, row_data)| {
+        let old = progress.fetch_add(1, Ordering::SeqCst);
         println!(
             "\rRendering: {}spp {:8.2}%",
             spp,
-            col as f64 / WIDTH as f64 * 100.0
+            (old + 1) as f64 / HEIGHT as f64 * 100.0
         );
-        pix[col].par_iter_mut().enumerate().for_each(|(row, data)| {
+        row_data.iter_mut().enumerate().for_each(|(row, data)| {
             for _ in 0..spp {
                 let mut cam = camcr(col as f64, row as f64); // construct image plane coordinates
-                cam.x += RND() / 700.0; // anti-aliasing for free
-                cam.y += RND() / 700.0;
+                cam.x += RND() / WIDTH as f64; // anti-aliasing for free
+                cam.y += RND() / HEIGHT as f64;
 
                 let o = v3(0.0, 0.0, 0.0);
                 let mut ray = Ray {
@@ -510,9 +514,9 @@ fn main() -> std::io::Result<()> {
                 *data += color.div(spp as f64); // write the contributions
             }
         });
-    }
+    });
 
-    let mut file = File::create("ray.ppm")?;
+    let mut file = File::create(format!("ray-{}.ppm", spp))?;
     write!(file, "P3\n{} {}\n{}\n ", WIDTH, HEIGHT, 255)?;
     for row in 0..HEIGHT {
         for col in 0..WIDTH {
