@@ -482,7 +482,7 @@ fn main() -> std::io::Result<()> {
     let params = Params { refr_index: 1.5 };
     let spp = 80; // samples per pixel
 
-    let mut pix = [[Vector::new(0.0, 0.0, 0.0); WIDTH]; HEIGHT];
+    let mut pix = vec![vec![Vector::new(0.0, 0.0, 0.0); WIDTH]; HEIGHT];
 
     let start = Instant::now();
 
