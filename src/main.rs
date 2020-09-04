@@ -1,53 +1,37 @@
 use rand::prelude::random;
 use rayon::prelude::*;
 use std::cmp::min;
-use std::f64::consts::PI;
+use std::f64::consts::{FRAC_PI_4, PI};
 use std::fs::File;
 use std::io::Write;
-use std::num;
-use std::ops::{Add, AddAssign, Index, Mul, Sub};
+use std::ops::{Add, AddAssign, Mul, Sub};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-const WIDTH: usize = 900;
-const HEIGHT: usize = 900;
-const INF: f64 = 1e9;
 const EPS: f64 = 1e-6;
 
-//std::mt19937 mersenneTwister;
-//std::uniform_real_distribution<double> uniform;
-//#define RND (2.0*uniform(mersenneTwister)-1.0)
-//#define RND2 (uniform(mersenneTwister))
-fn RND() -> f64 {
-    2.0 * random::<f64>() - 1.0
-}
-
-fn RND2() -> f64 {
-    random()
-}
-
 #[derive(Copy, Clone, Debug)]
-struct Vector {
+struct V3 {
     x: f64,
     y: f64,
     z: f64,
 }
 
-impl Vector {
-    fn new(x: f64, y: f64, z: f64) -> Vector {
-        Vector { x, y, z }
+impl V3 {
+    fn new(x: f64, y: f64, z: f64) -> V3 {
+        V3 { x, y, z }
     }
 
-    fn scale(&self, b: f64) -> Vector {
-        Vector {
+    fn scale(&self, b: f64) -> V3 {
+        V3 {
             x: self.x * b,
             y: self.y * b,
             z: self.z * b,
         }
     }
 
-    fn div(&self, b: f64) -> Vector {
-        Vector {
+    fn div(&self, b: f64) -> V3 {
+        V3 {
             x: self.x / b,
             y: self.y / b,
             z: self.z / b,
@@ -58,18 +42,17 @@ impl Vector {
         f64::sqrt(self.dot(self))
     }
 
-    fn norm(&self) -> Vector {
+    fn norm(&self) -> V3 {
         self.div(self.length())
     }
 
-    fn dot(&self, rhs: &Vector) -> f64 {
+    fn dot(&self, rhs: &V3) -> f64 {
         let v = *self * *rhs;
         v.x + v.y + v.z
     }
 
-    // Vec operator%(const Vec &b) const {return Vec(y*b.z-z*b.y,z*b.x-x*b.z,x*b.y-y*b.x);}
-    fn cross(&self, rhs: &Vector) -> Vector {
-        Vector {
+    fn cross(&self, rhs: &V3) -> V3 {
+        V3 {
             x: self.y * rhs.z - self.z * rhs.y,
             y: self.z * rhs.x - self.x * rhs.z,
             z: self.x * rhs.y - self.y * rhs.x,
@@ -77,11 +60,11 @@ impl Vector {
     }
 }
 
-impl Add for Vector {
-    type Output = Vector;
+impl Add for V3 {
+    type Output = V3;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Vector {
+        V3 {
             x: self.x + rhs.x,
             y: self.y + rhs.y,
             z: self.z + rhs.z,
@@ -89,17 +72,17 @@ impl Add for Vector {
     }
 }
 
-impl AddAssign for Vector {
+impl AddAssign for V3 {
     fn add_assign(&mut self, other: Self) {
         *self = *self + other
     }
 }
 
-impl Sub for Vector {
-    type Output = Vector;
+impl Sub for V3 {
+    type Output = V3;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Vector {
+        V3 {
             x: self.x - rhs.x,
             y: self.y - rhs.y,
             z: self.z - rhs.z,
@@ -107,11 +90,11 @@ impl Sub for Vector {
     }
 }
 
-impl Mul for Vector {
-    type Output = Vector;
+impl Mul for V3 {
+    type Output = V3;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        Vector {
+        V3 {
             x: self.x * rhs.x,
             y: self.y * rhs.y,
             z: self.z * rhs.z,
@@ -119,30 +102,17 @@ impl Mul for Vector {
     }
 }
 
-impl Index<usize> for Vector {
-    type Output = f64;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        match index {
-            0 => &self.x,
-            1 => &self.y,
-            2 => &self.z,
-            _ => panic!("invalid index {}", index),
-        }
-    }
-}
-
 // given v1, set v2 and v3 so they form an orthonormal system
 // (we assume v1 is already normalized)
-fn ons(v1: &Vector) -> (Vector, Vector) {
+fn ons(v1: &V3) -> (V3, V3) {
     let v2 = if v1.x.abs() > v1.y.abs() {
         // project to the y = 0 plane and construct a normalized orthogonal vector in this plane
         let invLen = 1.0 / f64::sqrt(v1.x * v1.x + v1.z * v1.z);
-        Vector::new(-v1.z * invLen, 0.0, v1.x * invLen)
+        v3(-v1.z * invLen, 0.0, v1.x * invLen)
     } else {
         // project to the x = 0 plane and construct a normalized orthogonal vector in this plane
         let invLen = 1.0 / f64::sqrt(v1.y * v1.y + v1.z * v1.z);
-        Vector::new(0.0, v1.z * invLen, -v1.y * invLen)
+        v3(0.0, v1.z * invLen, -v1.y * invLen)
     };
     let v3 = v1.cross(&v2);
     (v2, v3)
@@ -151,18 +121,17 @@ fn ons(v1: &Vector) -> (Vector, Vector) {
 // Rays have origin and direction.
 // The direction vector should always be normalized.
 struct Ray {
-    o: Vector,
-    d: Vector,
+    o: V3,
+    d: V3,
 }
 
 // Objects have color, emission, type (diffuse, specular, refractive)
 // All object should be intersectable and should be able to compute their surface normals.
 struct Obj {
-    cl: Vector,
+    cl: V3,
     emission: f64,
     obj_type: ObjType,
     shape: Shape,
-    // void setMat(Vec cl_ = 0, double emission_ = 0, int type_ = 0) { cl=cl_; emission=emission_; type=type_; }
 }
 
 enum ObjType {
@@ -173,7 +142,7 @@ enum ObjType {
 
 trait Intersect {
     fn intersect(&self, ray: &Ray) -> f64;
-    fn normal(&self, point: &Vector) -> Vector;
+    fn normal(&self, point: &V3) -> V3;
 }
 
 enum Shape {
@@ -189,7 +158,7 @@ impl Intersect for Shape {
         }
     }
 
-    fn normal(&self, point: &Vector) -> Vector {
+    fn normal(&self, point: &V3) -> V3 {
         match self {
             Self::Plane(plane) => plane.normal(point),
             Self::Sphere(sphere) => sphere.normal(point),
@@ -198,7 +167,7 @@ impl Intersect for Shape {
 }
 
 struct Plane {
-    n: Vector,
+    n: V3,
     d: f64,
 }
 
@@ -217,13 +186,13 @@ impl Intersect for Plane {
         }
     }
 
-    fn normal(&self, _point: &Vector) -> Vector {
+    fn normal(&self, _point: &V3) -> V3 {
         self.n
     }
 }
 
 struct Sphere {
-    c: Vector,
+    c: V3,
     r: f64,
 }
 
@@ -242,18 +211,16 @@ impl Intersect for Sphere {
             let sol2 = -b - disc;
             if sol2 > EPS {
                 sol2 / 2.0
+            } else if sol1 > EPS {
+                sol1 / 2.0
             } else {
-                if sol1 > EPS {
-                    sol1 / 2.0
-                } else {
-                    0.0
-                }
+                0.0
             }
         }
     }
 
-    fn normal(&self, point: &Vector) -> Vector {
-        return (*point - self.c).norm();
+    fn normal(&self, point: &V3) -> V3 {
+        (*point - self.c).norm()
     }
 }
 
@@ -263,6 +230,12 @@ struct Intersection<'a> {
 }
 
 struct Scene {
+    width: usize,
+    height: usize,
+    samples_per_pixel: usize,
+    refr_index: f64,
+    background_color: V3,
+    fovx: f64,
     objects: Vec<Obj>,
 }
 
@@ -273,7 +246,7 @@ impl Scene {
 
     fn intersect(&self, ray: &Ray) -> Intersection {
         let mut closest = Intersection {
-            t: INF,
+            t: std::f64::INFINITY,
             object: None,
         };
         for object in &self.objects {
@@ -285,40 +258,36 @@ impl Scene {
         }
         closest
     }
-}
 
-// Input is the pixel offset, output is the appropriate coordinate
-// on the image plane
-fn camcr(x: f64, y: f64) -> Vector {
-    let w: f64 = WIDTH as f64;
-    let h: f64 = HEIGHT as f64;
-    let fovx = std::f64::consts::FRAC_PI_4;
-    let fovy = (h / w) * fovx;
-    return v3(
-        ((2.0 * x - w) / w) * fovx.tan(),
-        -((2.0 * y - h) / h) * fovy.tan(),
-        -1.0,
-    );
+    // Input is the pixel offset, output is the appropriate coordinate
+    // on the image plane
+    fn camcr(&self, x: f64, y: f64) -> V3 {
+        let w: f64 = self.width as f64;
+        let h: f64 = self.height as f64;
+        let fovy = (h / w) * self.fovx;
+        v3(
+            ((2.0 * x - w) / w) * self.fovx.tan(), // tan pi/4 = 1
+            -((2.0 * y - h) / h) * fovy.tan(),
+            -1.0,
+        )
+    }
 }
 
 // Uniform sampling on a hemisphere to produce outgoing ray directions.
 // courtesy of http://www.rorydriscoll.com/2009/01/07/better-sampling/
-fn hemisphere(u1: f64, u2: f64) -> Vector {
+fn hemisphere(u1: f64, u2: f64) -> V3 {
     let r = (1.0 - u1 * u1).sqrt();
     let phi = 2.0 * PI * u2;
-    return Vector::new(phi.cos() * r, phi.sin() * r, u1);
+    v3(phi.cos() * r, phi.sin() * r, u1)
 }
 
-struct Params {
-    refr_index: f64,
-}
-
-fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut Vector, params: &Params) {
+fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut V3) {
     // Russian roulette: starting at depth 5, each recursive step will stop with a probability of 0.1
     let mut rrFactor = 1.0;
     if depth >= 5 {
         let rrStopProbability = 0.1;
-        if RND2() <= rrStopProbability {
+        if random::<f64>() <= rrStopProbability {
+            *clr += scene.background_color;
             return;
         }
         rrFactor = 1.0 / (1.0 - rrStopProbability);
@@ -328,6 +297,7 @@ fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut Vector, params: &Pa
     let (t, obj) = if let Some(obj) = intersection.object {
         (intersection.t, obj)
     } else {
+        *clr += scene.background_color;
         return;
     };
 
@@ -337,22 +307,22 @@ fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut Vector, params: &Pa
     ray.o = hp;
     // Add the emission, the L_e(x,w) part of the rendering equation, but scale it with the Russian Roulette
     // probability weight.
-    *clr += Vector::new(obj.emission, obj.emission, obj.emission).scale(rrFactor);
+    *clr += v3(obj.emission, obj.emission, obj.emission).scale(rrFactor);
 
-    let mut tmp = Vector::new(0.0, 0.0, 0.0);
+    let mut tmp = v3(0.0, 0.0, 0.0);
     match obj.obj_type {
         // Diffuse BRDF - choose an outgoing direction with hemisphere sampling.
         ObjType::DiffuseBRDF => {
             let (rotX, rotY) = ons(&N);
-            let sampledDir = hemisphere(RND2(), RND2());
-            let rotatedDir = Vector {
-                x: Vector::new(rotX.x, rotY.x, N.x).dot(&sampledDir),
-                y: Vector::new(rotX.y, rotY.y, N.y).dot(&sampledDir),
-                z: Vector::new(rotX.z, rotY.z, N.z).dot(&sampledDir),
+            let sampledDir = hemisphere(random(), random());
+            let rotatedDir = V3 {
+                x: v3(rotX.x, rotY.x, N.x).dot(&sampledDir),
+                y: v3(rotX.y, rotY.y, N.y).dot(&sampledDir),
+                z: v3(rotX.z, rotY.z, N.z).dot(&sampledDir),
             };
             ray.d = rotatedDir; // already normalized
             let cost = ray.d.dot(&N);
-            trace(ray, scene, depth + 1, &mut tmp, params);
+            trace(ray, scene, depth + 1, &mut tmp);
             *clr += (tmp * obj.cl).scale(cost * 0.1 * rrFactor);
         }
         // Specular BRDF - this is a singularity in the rendering equation that follows
@@ -361,13 +331,13 @@ fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut Vector, params: &Pa
         ObjType::SpecularBRDF => {
             let cost = ray.d.dot(&N);
             ray.d = (ray.d - N.scale(cost * 2.0)).norm();
-            trace(ray, scene, depth + 1, &mut tmp, params);
+            trace(ray, scene, depth + 1, &mut tmp);
             *clr += tmp.scale(rrFactor);
         }
         // Glass/refractive BRDF - we use the vector version of Snell's law and Fresnel's law
         // to compute the outgoing reflection and refraction directions and probability weights.
         ObjType::GlassRefractiveBRDF => {
-            let mut n = params.refr_index;
+            let mut n = scene.refr_index;
             let mut R0 = (1.0 - n) / (1.0 + n);
             R0 = R0 * R0;
             if N.dot(&ray.d) > 0.0 {
@@ -379,34 +349,39 @@ fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut Vector, params: &Pa
             let cost1 = (N.dot(&ray.d)) * -1.0; // cosine of theta_1
             let cost2 = 1.0 - n * n * (1.0 - cost1 * cost1); // cosine of theta_2
             let Rprob = R0 + (1.0 - R0) * f64::powf(1.0 - cost1, 5.0); // Schlick-approximation
-            ray.d = if cost2 > 0.0 && RND2() > Rprob {
+            ray.d = if cost2 > 0.0 && random::<f64>() > Rprob {
                 // refraction direction
                 ((ray.d.scale(n)) + (N.scale(n * cost1 - cost2.sqrt()))).norm()
             } else {
                 // reflection direction
                 (ray.d + N.scale(cost1 * 2.0)).norm()
             };
-            trace(ray, scene, depth + 1, &mut tmp, params);
+            trace(ray, scene, depth + 1, &mut tmp);
             *clr += tmp.scale(1.15 * rrFactor);
         }
     }
 }
 
-fn v3(x: f64, y: f64, z: f64) -> Vector {
-    Vector { x, y, z }
+fn v3(x: f64, y: f64, z: f64) -> V3 {
+    V3 { x, y, z }
 }
 
-fn sphere(r: f64, c: Vector) -> Shape {
+fn sphere(r: f64, c: V3) -> Shape {
     Shape::Sphere(Sphere { c, r })
 }
 
-fn plane(d: f64, n: Vector) -> Shape {
+fn plane(d: f64, n: V3) -> Shape {
     Shape::Plane(Plane { n, d })
 }
 
 fn main() -> std::io::Result<()> {
-    //srand(time(NULL));
     let scene = Scene {
+        width: 900,
+        height: 900,
+        samples_per_pixel: 256,
+        refr_index: 1.5,
+        fovx: FRAC_PI_4,
+        background_color: v3(1.0, 1.0, 1.0).scale(4.0),
         objects: vec![
             // Middle sphere
             Obj {
@@ -481,45 +456,46 @@ fn main() -> std::io::Result<()> {
         ],
     };
 
-    let params = Params { refr_index: 1.5 };
-    let spp = 2000; // samples per pixel
-
-    let mut pix = vec![vec![Vector::new(0.0, 0.0, 0.0); WIDTH]; HEIGHT];
+    let mut pix = vec![vec![v3(0.0, 0.0, 0.0); scene.width]; scene.height];
 
     let start = Instant::now();
 
-    let mut progress = std::sync::atomic::AtomicUsize::new(0);
+    let progress = std::sync::atomic::AtomicUsize::new(0);
 
     pix.par_iter_mut().enumerate().for_each(|(col, row_data)| {
         let old = progress.fetch_add(1, Ordering::SeqCst);
-        println!(
+        print!(
             "\rRendering: {}spp {:8.2}%",
-            spp,
-            (old + 1) as f64 / HEIGHT as f64 * 100.0
+            scene.samples_per_pixel,
+            old as f64 / scene.height as f64 * 100.0
         );
+        std::io::stdout().flush().unwrap();
         row_data.iter_mut().enumerate().for_each(|(row, data)| {
-            for _ in 0..spp {
-                let mut cam = camcr(col as f64, row as f64); // construct image plane coordinates
-                cam.x += RND() / WIDTH as f64; // anti-aliasing for free
-                cam.y += RND() / HEIGHT as f64;
+            let mut color = v3(0.0, 0.0, 0.0);
+            let cam = scene.camcr(col as f64, row as f64); // construct image plane coordinates
+            for _ in 0..scene.samples_per_pixel {
+                let cam_2 = v3(
+                    cam.x + (random::<f64>() - 0.5) / scene.width as f64, // anti-aliasing for free
+                    cam.y + (random::<f64>() - 0.5) / scene.height as f64,
+                    cam.z,
+                );
 
                 let o = v3(0.0, 0.0, 0.0);
                 let mut ray = Ray {
                     o,
-                    d: (cam - o).norm(), // point from the origin to the camera plane
+                    d: (cam_2 - o).norm(), // point from the origin to the camera plane
                 };
 
-                let mut color = v3(0.0, 0.0, 0.0);
-                trace(&mut ray, &scene, 0, &mut color, &params);
-                *data += color.div(spp as f64); // write the contributions
+                trace(&mut ray, &scene, 0, &mut color);
             }
+            *data += color.div(scene.samples_per_pixel as f64); // write the contributions
         });
     });
 
-    let mut file = File::create(format!("ray-{}.ppm", spp))?;
-    write!(file, "P3\n{} {}\n{}\n ", WIDTH, HEIGHT, 255)?;
-    for row in 0..HEIGHT {
-        for col in 0..WIDTH {
+    let mut file = File::create(format!("ray-{}.ppm", scene.samples_per_pixel))?;
+    write!(file, "P3\n{} {}\n{}\n ", scene.width, scene.height, 255)?;
+    for row in 0..scene.height {
+        for col in 0..scene.width {
             let p = pix[col][row];
             write!(
                 file,
