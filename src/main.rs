@@ -18,10 +18,6 @@ struct V3 {
 }
 
 impl V3 {
-    fn new(x: f64, y: f64, z: f64) -> V3 {
-        V3 { x, y, z }
-    }
-
     fn scale(&self, b: f64) -> V3 {
         V3 {
             x: self.x * b,
@@ -107,12 +103,12 @@ impl Mul for V3 {
 fn ons(v1: &V3) -> (V3, V3) {
     let v2 = if v1.x.abs() > v1.y.abs() {
         // project to the y = 0 plane and construct a normalized orthogonal vector in this plane
-        let invLen = 1.0 / f64::sqrt(v1.x * v1.x + v1.z * v1.z);
-        v3(-v1.z * invLen, 0.0, v1.x * invLen)
+        let inv_len = 1.0 / f64::sqrt(v1.x * v1.x + v1.z * v1.z);
+        v3(-v1.z * inv_len, 0.0, v1.x * inv_len)
     } else {
         // project to the x = 0 plane and construct a normalized orthogonal vector in this plane
-        let invLen = 1.0 / f64::sqrt(v1.y * v1.y + v1.z * v1.z);
-        v3(0.0, v1.z * invLen, -v1.y * invLen)
+        let inv_len = 1.0 / f64::sqrt(v1.y * v1.y + v1.z * v1.z);
+        v3(0.0, v1.z * inv_len, -v1.y * inv_len)
     };
     let v3 = v1.cross(&v2);
     (v2, v3)
@@ -240,10 +236,6 @@ struct Scene {
 }
 
 impl Scene {
-    fn add(&mut self, o: Obj) {
-        self.objects.push(o)
-    }
-
     fn intersect(&self, ray: &Ray) -> Intersection {
         let mut closest = Intersection {
             t: std::f64::INFINITY,
@@ -283,14 +275,14 @@ fn hemisphere(u1: f64, u2: f64) -> V3 {
 
 fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut V3) {
     // Russian roulette: starting at depth 5, each recursive step will stop with a probability of 0.1
-    let mut rrFactor = 1.0;
+    let mut rr_factor = 1.0;
     if depth >= 5 {
-        let rrStopProbability = 0.1;
-        if random::<f64>() <= rrStopProbability {
+        let rr_stop_probability = 0.1;
+        if random::<f64>() <= rr_stop_probability {
             *clr += scene.background_color;
             return;
         }
-        rrFactor = 1.0 / (1.0 - rrStopProbability);
+        rr_factor = 1.0 / (1.0 - rr_stop_probability);
     }
 
     let intersection = scene.intersect(ray);
@@ -303,61 +295,61 @@ fn trace(ray: &mut Ray, scene: &Scene, depth: i32, clr: &mut V3) {
 
     // Travel the ray to the hit point where the closest object lies and compute the surface normal there.
     let hp = ray.o + ray.d.scale(t);
-    let mut N = obj.shape.normal(&hp);
+    let mut normal = obj.shape.normal(&hp);
     ray.o = hp;
     // Add the emission, the L_e(x,w) part of the rendering equation, but scale it with the Russian Roulette
     // probability weight.
-    *clr += v3(obj.emission, obj.emission, obj.emission).scale(rrFactor);
+    *clr += v3(obj.emission, obj.emission, obj.emission).scale(rr_factor);
 
     let mut tmp = v3(0.0, 0.0, 0.0);
     match obj.obj_type {
         // Diffuse BRDF - choose an outgoing direction with hemisphere sampling.
         ObjType::DiffuseBRDF => {
-            let (rotX, rotY) = ons(&N);
-            let sampledDir = hemisphere(random(), random());
-            let rotatedDir = V3 {
-                x: v3(rotX.x, rotY.x, N.x).dot(&sampledDir),
-                y: v3(rotX.y, rotY.y, N.y).dot(&sampledDir),
-                z: v3(rotX.z, rotY.z, N.z).dot(&sampledDir),
+            let (rot_x, rot_y) = ons(&normal);
+            let sampled_dir = hemisphere(random(), random());
+            let rotated_dir = V3 {
+                x: v3(rot_x.x, rot_y.x, normal.x).dot(&sampled_dir),
+                y: v3(rot_x.y, rot_y.y, normal.y).dot(&sampled_dir),
+                z: v3(rot_x.z, rot_y.z, normal.z).dot(&sampled_dir),
             };
-            ray.d = rotatedDir; // already normalized
-            let cost = ray.d.dot(&N);
+            ray.d = rotated_dir; // already normalized
+            let cost = ray.d.dot(&normal);
             trace(ray, scene, depth + 1, &mut tmp);
-            *clr += (tmp * obj.cl).scale(cost * 0.1 * rrFactor);
+            *clr += (tmp * obj.cl).scale(cost * 0.1 * rr_factor);
         }
         // Specular BRDF - this is a singularity in the rendering equation that follows
         // delta distribution, therefore we handle this case explicitly - one incoming
         // direction -> one outgoing direction, that is, the perfect reflection direction.
         ObjType::SpecularBRDF => {
-            let cost = ray.d.dot(&N);
-            ray.d = (ray.d - N.scale(cost * 2.0)).norm();
+            let cost = ray.d.dot(&normal);
+            ray.d = (ray.d - normal.scale(cost * 2.0)).norm();
             trace(ray, scene, depth + 1, &mut tmp);
-            *clr += tmp.scale(rrFactor);
+            *clr += tmp.scale(rr_factor);
         }
         // Glass/refractive BRDF - we use the vector version of Snell's law and Fresnel's law
         // to compute the outgoing reflection and refraction directions and probability weights.
         ObjType::GlassRefractiveBRDF => {
             let mut n = scene.refr_index;
-            let mut R0 = (1.0 - n) / (1.0 + n);
-            R0 = R0 * R0;
-            if N.dot(&ray.d) > 0.0 {
+            let mut r0 = (1.0 - n) / (1.0 + n);
+            r0 = r0 * r0;
+            if normal.dot(&ray.d) > 0.0 {
                 // we're inside the medium
-                N = N.scale(-1.0);
+                normal = normal.scale(-1.0);
                 n = 1.0 / n;
             }
             n = 1.0 / n;
-            let cost1 = (N.dot(&ray.d)) * -1.0; // cosine of theta_1
+            let cost1 = (normal.dot(&ray.d)) * -1.0; // cosine of theta_1
             let cost2 = 1.0 - n * n * (1.0 - cost1 * cost1); // cosine of theta_2
-            let Rprob = R0 + (1.0 - R0) * f64::powf(1.0 - cost1, 5.0); // Schlick-approximation
-            ray.d = if cost2 > 0.0 && random::<f64>() > Rprob {
+            let rprob = r0 + (1.0 - r0) * f64::powf(1.0 - cost1, 5.0); // Schlick-approximation
+            ray.d = if cost2 > 0.0 && random::<f64>() > rprob {
                 // refraction direction
-                ((ray.d.scale(n)) + (N.scale(n * cost1 - cost2.sqrt()))).norm()
+                ((ray.d.scale(n)) + (normal.scale(n * cost1 - cost2.sqrt()))).norm()
             } else {
                 // reflection direction
-                (ray.d + N.scale(cost1 * 2.0)).norm()
+                (ray.d + normal.scale(cost1 * 2.0)).norm()
             };
             trace(ray, scene, depth + 1, &mut tmp);
-            *clr += tmp.scale(1.15 * rrFactor);
+            *clr += tmp.scale(1.15 * rr_factor);
         }
     }
 }
@@ -378,10 +370,10 @@ fn main() -> std::io::Result<()> {
     let scene = Scene {
         width: 900,
         height: 900,
-        samples_per_pixel: 256,
+        samples_per_pixel: 5000,
         refr_index: 1.5,
         fovx: FRAC_PI_4,
-        background_color: v3(1.0, 1.0, 1.0).scale(4.0),
+        background_color: v3(1.0, 1.0, 1.0).scale(10.0),
         objects: vec![
             // Middle sphere
             Obj {
